@@ -1,10 +1,11 @@
-# Manual técnico da package PDFPKGEN
-Este manual descreve a instalação, o modelo de coordenadas e o uso das rotinas públicas da package Oracle PL/SQL `PDFPKGEN`. A package constrói um PDF 1.4 em memória e retorna o documento como um `BLOB` temporário.
+# Manual técnico da package PDFpkgen
+
+Este manual descreve a instalação, o modelo de coordenadas e o uso das rotinas públicas da package Oracle PL/SQL `PDFpkgen`. A package constrói um PDF 1.4 em memória e retorna o documento como um `BLOB` temporário.
 
 ## 1. Escopo e requisitos
 
 - Oracle Database com suporte a PL/SQL, `DBMS_LOB`, `UTL_RAW` e `UTL_I18N`.
-- A package specification e o body devem ser instalados no mesmo schema, nessa ordem: [pdfpkgen.pks](../src/pdfpkgen.pks) e depois [pdfpkgen.pkb](../src/pdfpkgen.pkb). Esses scripts criam o objeto Oracle `PDFPKGEN`.
+- A package specification e o body devem ser instalados no mesmo schema, nessa ordem: [pdfpkgen.pks](../src/pdfpkgen.pks) e depois [pdfpkgen.pkb](../src/pdfpkgen.pkb). Esses scripts criam o objeto Oracle `PDFpkgen`.
 - Para persistir os resultados dos exemplos, são necessárias uma tabela repositório com coluna `BLOB` e uma sequência. Esses objetos não fazem parte da package.
 - Sem fonte Unicode configurada, o texto deve ser representável em Windows-1252/WinAnsi.
 
@@ -413,7 +414,7 @@ END;
 
 ## 12. Referência completa da API pública
 
-Todas as rotinas abaixo pertencem à package Oracle `PDFPKGEN`. Os parâmetros são de entrada; a API pública não possui parâmetros `OUT` ou `IN OUT`. Os valores padrão são os declarados na specification.
+Todas as rotinas abaixo pertencem à package Oracle `PDFpkgen`. Os parâmetros são de entrada; a API pública não possui parâmetros `OUT` ou `IN OUT`. Os valores padrão são os declarados na specification.
 
 ### Ciclo do documento e metadados
 

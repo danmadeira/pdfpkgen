@@ -1,4 +1,4 @@
-# PDFPKGEN
+# PDFpkgen
 
 Package Oracle PL/SQL para gerar documentos PDF 1.4 diretamente no banco, em memória, retornando o arquivo como `BLOB` temporário. A implementação monta os objetos PDF, os fluxos de páginas, recursos, referências cruzadas (`xref`) e trailer sem depender de um serviço externo de geração.
 
@@ -51,7 +51,7 @@ BEGIN
     pdfpkgen.set_metadata(
         p_title => 'Relatório de exemplo',
         p_author => 'Equipe de dados',
-        p_subject => 'Demonstração da PDFPKGEN',
+        p_subject => 'Demonstração da PDFpkgen',
         p_keywords => 'relatório, exemplo'
     );
     pdfpkgen.set_page_footer('Página {PAGE}', 9, FALSE, 'R');
@@ -110,4 +110,4 @@ Não há neste repositório um registro verificável do consumo de créditos ass
 
 ## Licença
 
-A package PDFPKGEN (arquivos de especificação e corpo em `src/pdfpkgen.pks` e `src/pdfpkgen.pkb`) é licenciada sob a **GNU General Public License v3.0 (GPLv3)**. Essa licença se aplica somente à package; não se estende automaticamente ao exemplo, à documentação, ao PDF de demonstração ou a outros arquivos deste repositório. Esses materiais e quaisquer fontes, imagens ou outros recursos de terceiros permanecem sujeitos às licenças e aos direitos aplicáveis a cada item.
+A package PDFpkgen (arquivos de especificação e corpo em `src/pdfpkgen.pks` e `src/pdfpkgen.pkb`) é licenciada sob a **GNU General Public License v3.0 (GPLv3)**. Essa licença se aplica somente à package; não se estende automaticamente ao exemplo, à documentação, ao PDF de demonstração ou a outros arquivos deste repositório. Esses materiais e quaisquer fontes, imagens ou outros recursos de terceiros permanecem sujeitos às licenças e aos direitos aplicáveis a cada item.
