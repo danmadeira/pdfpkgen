@@ -1,10 +1,10 @@
 # Manual técnico da package PDFpkgen
 
-Este manual descreve a instalação, o modelo de coordenadas e o uso das rotinas públicas da package Oracle PL/SQL `PDFpkgen`. A package constrói um PDF 1.4 em memória e retorna o documento como um `BLOB` temporário.
+Este manual descreve a instalação, o modelo de coordenadas e o uso das rotinas públicas da package Oracle PL/SQL `PDFpkgen`. A package constrói um PDF 1.7 (ISO 32000-1) em memória e retorna o documento como um `BLOB` temporário.
 
 ## 1. Escopo e requisitos
 
-- Oracle Database com suporte a PL/SQL, `DBMS_LOB`, `UTL_RAW` e `UTL_I18N`.
+- Oracle Database com suporte a PL/SQL, `DBMS_LOB`, `UTL_RAW`, `UTL_I18N` e `UTL_COMPRESS`, além da função `SYS_GUID`. O `UTL_COMPRESS` é usado na compressão `FlateDecode` dos fluxos do PDF; se o `EXECUTE` não estiver disponível para o schema, solicite o privilégio ao DBA.
 - A package specification e o body devem ser instalados no mesmo schema, nessa ordem: [pdfpkgen.pks](../src/pdfpkgen.pks) e depois [pdfpkgen.pkb](../src/pdfpkgen.pkb). Esses scripts criam o objeto Oracle `PDFpkgen`.
 - Para persistir os resultados dos exemplos, são necessárias uma tabela repositório com coluna `BLOB` e uma sequência. Esses objetos não fazem parte da package.
 - Sem fonte Unicode configurada, o texto deve ser representável em Windows-1252/WinAnsi.
@@ -21,6 +21,14 @@ ORDER BY sequence;
 A package guarda o estado do documento em variáveis de pacote: páginas, cores, tabela e imagens. Comece cada documento com `pdfpkgen.new_document`; não é seguro intercalar a composição de vários documentos na mesma sessão.
 
 Internamente, cada página acumula operadores PDF em um CLOB temporário. `generate` converte esses fluxos para bytes Windows-1252, monta os objetos PDF, os recursos compartilhados (fontes e imagens), a tabela de referências cruzadas (`xref`) e o trailer. O resultado é um BLOB temporário; a package não cria arquivos no sistema operacional.
+
+### Formato do arquivo gerado
+
+- **Versão:** o cabeçalho é `%PDF-1.7`, seguido de um comentário com bytes binários (`E2 E3 CF D3`), e o catálogo declara `/Version /1.7`. O arquivo usa apenas recursos já definidos no PDF 1.4 e válidos no 1.7; a referência cruzada continua sendo a tabela `xref` clássica.
+- **Identificador:** o trailer inclui `/ID` com dois valores iguais, gerados por `SYS_GUID`, identificando o arquivo.
+- **Compressão:** os fluxos de conteúdo das páginas e, quando há fonte Unicode, a fonte TrueType incorporada, o `CIDToGIDMap` e o `ToUnicode` são comprimidos com `FlateDecode`. O `UTL_COMPRESS` gera gzip; a package converte para zlib (cabeçalho `78 9C`, deflate e Adler-32), formato exigido pelo PDF. Imagens JPEG (`DCTDecode`) e PNG (`FlateDecode` com predictor) não são recomprimidas.
+- **Binário:** o BLOB retornado contém dados binários e não deve ser tratado como texto (`CLOB`/`VARCHAR2`) ao persistir, enviar por e-mail ou transmitir por HTTP.
+- **Não utilizado:** object streams, cross-reference streams, criptografia, transparência avançada e camadas. O arquivo não atende PDF/A (fontes Helvetica não incorporadas, sem XMP nem OutputIntent).
 
 ## 2. Coordenadas e página
 
@@ -106,7 +114,7 @@ pdfpkgen.set_metadata(
 pdfpkgen.new_document;
 ```
 
-Os metadados são gravados como strings Unicode UTF-16BE, para leitores de PDF exibirem corretamente caracteres fora de WinAnsi. Se nenhum campo estiver definido, o dicionário Info é omitido.
+Os metadados são gravados como strings Unicode UTF-16BE, para leitores de PDF exibirem corretamente caracteres fora de WinAnsi. O dicionário Info é sempre gerado e inclui, além dos campos definidos, `/Producer (pdfpkgen)` e `/CreationDate` na data/hora UTC da geração (formato `D:AAAAMMDDHHMMSSZ`). Esses dois campos não são configuráveis.
 
 ## 4. API de documentos e layout
 
@@ -346,7 +354,7 @@ pdfpkgen.add_image(
 );
 ```
 
-PNG é descompactado apenas no sentido de extrair e concatenar seus chunks `IDAT`; o fluxo zlib/Deflate permanece comprimido. O PDF usa `FlateDecode` com `DecodeParms` e predictor PNG. O parser valida estrutura e limites dos chunks, mas não valida CRC nem decodifica integralmente a imagem para detectar corrupção dos pixels.
+PNG é descompactado apenas no sentido de extrair e concatenar seus chunks `IDAT`; o fluxo zlib/Deflate permanece comprimido. O PDF usa `FlateDecode` com `DecodeParms` e predictor PNG; esse fluxo é copiado como está, sem recompressão. O parser valida estrutura e limites dos chunks, mas não valida CRC nem decodifica integralmente a imagem para detectar corrupção dos pixels.
 
 ```sql
 -- Escala natural de 0,5 e alinhamento do meio da imagem à linha de texto.
@@ -406,6 +414,8 @@ END;
 - `add_cell` quebra o texto de dados e calcula uma altura mínima; cabeçalhos de tabela continuam limitados a uma linha. Parágrafos são quebrados conforme a largura fornecida.
 - As métricas de Helvetica para alinhamento e quebra são aproximações. Faça revisão visual para layouts que exijam precisão tipográfica.
 - O PDF é montado em memória. Para documentos ou imagens grandes, considere o consumo de PGA/LOB temporário e libere todos os BLOBs temporários após o uso.
+- A compressão `FlateDecode` usa BLOBs temporários adicionais durante a geração e calcula o Adler-32 em PL/SQL, byte a byte. Em fontes TrueType grandes, isso aumenta o tempo de `generate`; meça no seu ambiente.
+- O arquivo é declarado como PDF 1.7, mas não é PDF/A: as fontes Helvetica não são incorporadas e não há metadados XMP nem OutputIntent.
 - Sem TTF configurada, a package usa as quatro fontes Type 1 padrão: Helvetica regular, bold, oblique e bold-oblique. A fonte Unicode incorporada é uma única face TTF e atualmente aceita somente BMP/cmap formato 4, sem ligaduras nem shaping complexo.
 
 ## 11. Exemplo incluído no projeto
@@ -420,7 +430,7 @@ Todas as rotinas abaixo pertencem à package Oracle `PDFpkgen`. Os parâmetros s
 
 - `new_document`: limpa os dados temporários do documento anterior e inicia um documento com a primeira página. Mantém configurações da sessão, como tamanho, margens, cabeçalho/rodapé, metadados e fonte Unicode.
 - `add_page`: acrescenta uma página ao documento ativo, reinicia a posição do cursor e reaplica o cabeçalho/rodapé configurado.
-- `set_metadata(p_title, p_author, p_subject, p_keywords)`: configura título, autor, assunto e palavras-chave no dicionário Info do PDF. Todos são `VARCHAR2`, opcionais e padrão `NULL`; cada valor aceita até 4000 bytes. `NULL` limpa o campo. A configuração permanece na sessão até ser alterada.
+- `set_metadata(p_title, p_author, p_subject, p_keywords)`: configura título, autor, assunto e palavras-chave no dicionário Info do PDF. Todos são `VARCHAR2`, opcionais e padrão `NULL`; cada valor aceita até 4000 bytes. `NULL` limpa o campo. A configuração permanece na sessão até ser alterada. `/Producer` e `/CreationDate` são sempre gravados automaticamente.
 - `set_page_header(p_text, p_size, p_bold, p_align, p_y)`: configura o texto repetido no topo de cada página. `p_text` é `VARCHAR2`; `p_size` é positivo em pontos (9); `p_bold` ativa negrito (`FALSE`); `p_align` é `L`, `C` ou `R` (`C`); `p_y` é coordenada vertical opcional em pontos (`NULL`, posição automática). `{PAGE}` é substituído pelo número da página.
 - `set_page_footer(p_text, p_size, p_bold, p_align, p_y)`: mesmos parâmetros e regras de `set_page_header`, para o rodapé. Configure ambos antes de `new_document`.
 - `set_unicode_font(p_font_blob, p_font_name)`: carrega uma fonte TrueType licenciada em `p_font_blob` (`BLOB`) antes de `new_document`; `p_font_name` é o nome PDF (`PDFGenUnicode`). Requer `cmap` Unicode formato 4 e suporta caracteres BMP existentes na fonte.
@@ -467,6 +477,6 @@ As rotinas de caminho exigem `begin_path` e devem terminar com `stroke_path` ou 
 ### Imagens e geração
 
 - `add_image(p_image_blob, p_x, p_y, p_width, p_height, p_scale, p_text_align, p_text_size)`: incorpora `BLOB` JPEG RGB8 ou PNG suportado. Coordenadas e dimensões são pontos; largura/altura `NULL` ou 0 são calculadas pela proporção. `p_scale` é fator positivo alternativo às dimensões (`NULL`); `p_text_align` é `B`, `T` ou `M` (`B`); `p_text_size` define a altura estimada da linha em pontos (10). O retângulo final deve caber na página. PNG aceita grayscale/RGB8 ou paleta indexada e `tRNS` binário; canal alpha explícito e transparência parcial não são suportados.
-- `generate RETURN BLOB`: finaliza e retorna o PDF como `BLOB` temporário. O chamador deve persistir ou transmitir o resultado e liberar o temporário com `DBMS_LOB.FREETEMPORARY`.
+- `generate RETURN BLOB`: finaliza e retorna o PDF 1.7 (com fluxos `FlateDecode`) como `BLOB` temporário. O chamador deve persistir ou transmitir o resultado e liberar o temporário com `DBMS_LOB.FREETEMPORARY`.
 
 Esta referência corresponde à specification instalada; os exemplos ilustram chamadas com parâmetros nomeados.

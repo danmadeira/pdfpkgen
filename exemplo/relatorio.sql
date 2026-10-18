@@ -232,7 +232,7 @@ BEGIN
     );
     pdfpkgen.set_metadata(
         p_title => 'Panorama de desempenho | Relatório integrado',
-        p_author => 'Equipe de Inteligência',
+        p_author => 'Daniel Madeira',
         p_subject => 'Demonstração editorial dos recursos PDFPKGEN',
         p_keywords => 'relatório, indicadores, vendas, PDFPKGEN'
     );

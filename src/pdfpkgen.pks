@@ -2,11 +2,11 @@ CREATE OR REPLACE PACKAGE pdfpkgen IS
 /*******************************************************************************
    NOME DA PACKAGE: PDFpkgen
    AUTOR:           Daniel Madeira
-   DATA CRIAÇÃO:    01/10/2026
-   VERSÃO:          1.1
+   DATA CRIAÇÃO:    18/10/2026
+   VERSÃO:          2.0
 
    DESCRIÇÃO:
-   Package Oracle PL/SQL para gerar documentos PDF 1.4 diretamente no banco, em
+   Package Oracle PL/SQL para gerar documentos PDF 1.7 diretamente no banco, em
    memória, retornando o arquivo como `BLOB` temporário. A implementação monta
    os objetos PDF, os fluxos de páginas, recursos, referências cruzadas (`xref`)
    e trailer sem depender de um serviço externo de geração.

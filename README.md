@@ -1,6 +1,6 @@
 # PDFpkgen
 
-Package Oracle PL/SQL para gerar documentos PDF 1.4 diretamente no banco, em memória, retornando o arquivo como `BLOB` temporário. A implementação monta os objetos PDF, os fluxos de páginas, recursos, referências cruzadas (`xref`) e trailer sem depender de um serviço externo de geração.
+Package Oracle PL/SQL para gerar documentos PDF 1.7 (ISO 32000-1) diretamente no banco, em memória, retornando o arquivo como `BLOB` temporário. A implementação monta os objetos PDF, os fluxos de páginas (comprimidos com `FlateDecode`), recursos, referências cruzadas (`xref`) e trailer sem depender de um serviço externo de geração.
 
 > **Status:** projeto PL/SQL em desenvolvimento. A compilação e a renderização devem ser verificadas no Oracle Database e em um leitor de PDF compatível com os recursos utilizados.
 
@@ -14,15 +14,21 @@ Package Oracle PL/SQL para gerar documentos PDF 1.4 diretamente no banco, em mem
 - Tabelas com cabeçalho repetido na paginação, células com borda, preenchimento, padding, alinhamento horizontal/vertical, cor e negrito.
 - Desenho vetorial: linhas, retângulos, caminhos, segmentos e curvas Bézier, com cores RGB.
 - Inclusão de imagens JPEG RGB8 e PNG grayscale/RGB8 ou indexado, com suporte limitado a transparência binária `tRNS`. **PNG RGBA/grayscale+alpha e transparência parcial não são suportados.** A escala e o alinhamento vertical da imagem em relação à linha de texto podem ser configurados.
-- Metadados do PDF: título, autor, assunto e palavras-chave.
+- Metadados do PDF: título, autor, assunto e palavras-chave opcionais. O dicionário Info sempre é gerado, com `/Producer` e `/CreationDate` (UTC).
+- Compressão `FlateDecode` (zlib, via `UTL_COMPRESS`) nos fluxos de conteúdo das páginas e, quando usada, na fonte TrueType incorporada, no `CIDToGIDMap` e no `ToUnicode`. Imagens JPEG (`DCTDecode`) e PNG (`FlateDecode` com predictor) mantêm seus filtros originais.
+- Arquivo declarado como PDF 1.7: cabeçalho `%PDF-1.7` com comentário binário, `/Version /1.7` no catálogo e `/ID` no trailer.
 - Fonte TrueType incorporada opcional para texto Unicode BMP, com mapa ToUnicode. A fonte deve ser fornecida pelo usuário e cobrir os caracteres usados; não há suporte a emojis, shaping complexo ou OTF-CFF/WOFF.
 - Validação dos argumentos de dimensão, coordenada, cor, alinhamento, caminho vetorial e imagem, com erros PL/SQL descritivos.
 
 ## Requisitos
 
-- Oracle Database com PL/SQL e acesso aos pacotes `DBMS_LOB`, `UTL_RAW` e `UTL_I18N`.
+- Oracle Database com PL/SQL e acesso aos pacotes `DBMS_LOB`, `UTL_RAW`, `UTL_I18N` e `UTL_COMPRESS` (além da função `SYS_GUID`).
 - Permissões necessárias para criar a package e utilizar esses pacotes.
 - Opcionalmente, uma tabela de repositório com coluna `BLOB` e uma sequência para armazenar PDFs, fontes e imagens usados nos exemplos. Esses objetos são da aplicação e não são criados pelo projeto.
+
+## Conformidade com o PDF 1.7
+
+O arquivo gerado declara PDF 1.7 e usa apenas recursos definidos desde o PDF 1.4: tabela `xref` clássica, fontes Type1 padrão (Helvetica) e, opcionalmente, TrueType incorporada. A package **não** usa object streams, cross-reference streams, criptografia, transparência avançada nem camadas. Também **não** atende PDF/A, pois as fontes Helvetica não são incorporadas e não há metadados XMP nem OutputIntent.
 
 ## Instalação
 
@@ -98,7 +104,7 @@ A documentação de instalação, coordenadas, paginação, metadados, texto, ta
 
 A construção da package foi conduzida pelo desenvolvedor, que forneceu os prompts e as orientações necessários para traduzir a especificação do formato PDF em funcionalidades PL/SQL. Durante o desenvolvimento, as funcionalidades foram avaliadas e ajustadas iterativamente para alcançar um resultado adequado ao propósito do projeto. A IA atuou como ferramenta de apoio nesse processo, sob orientação e revisão humana.
 
-Foi utilizado o **GitHub Copilot Pro**, com o modelo **GPT-6 Luna**.
+Foi utilizado o **GitHub Copilot Pro**, com o modelo **GPT-6 Luna**. A atualização para PDF 1.7 e a compressão `FlateDecode` contaram com o apoio do **Claude** (Anthropic), com o modelo **Sonnet 5.5**, também sob orientação e revisão humana.
 
 Não há neste repositório um registro verificável do consumo de créditos associado ao projeto. Por isso, não é possível informar uma quantidade sem especular; eventuais cotas e métricas dependem do histórico de uso da conta e do serviço.
 
@@ -106,7 +112,7 @@ Não há neste repositório um registro verificável do consumo de créditos ass
 
 - ISO. **ISO 32000-1:2008 — Document management — Portable document format — Part 1: PDF 1.7.** Referência para estrutura, objetos, streams, fontes, imagens e dicionários do PDF.
 - W3C. **Portable Network Graphics (PNG) Specification (Third Edition).** Referência para chunks, paletas, filtros e transparência PNG: <https://www.w3.org/TR/png-3/>.
-- Oracle. **Database PL/SQL Language Reference** e documentação dos pacotes `DBMS_LOB`, `UTL_RAW` e `UTL_I18N`, para as APIs de linguagem e LOB utilizadas.
+- Oracle. **Database PL/SQL Language Reference** e documentação dos pacotes `DBMS_LOB`, `UTL_RAW`, `UTL_I18N` e `UTL_COMPRESS`, para as APIs de linguagem e LOB utilizadas.
 
 ## Licença
 

@@ -2,11 +2,11 @@ CREATE OR REPLACE PACKAGE BODY pdfpkgen IS
 /*******************************************************************************
    NOME DA PACKAGE: PDFpkgen
    AUTOR:           Daniel Madeira
-   DATA CRIAÇÃO:    01/10/2026
-   VERSÃO:          1.1
+   DATA CRIAÇÃO:    18/10/2026
+   VERSÃO:          2.0
 
    DESCRIÇÃO:
-   Package Oracle PL/SQL para gerar documentos PDF 1.4 diretamente no banco, em
+   Package Oracle PL/SQL para gerar documentos PDF 1.7 diretamente no banco, em
    memória, retornando o arquivo como `BLOB` temporário. A implementação monta
    os objetos PDF, os fluxos de páginas, recursos, referências cruzadas (`xref`)
    e trailer sem depender de um serviço externo de geração.
@@ -3289,10 +3289,11 @@ CREATE OR REPLACE PACKAGE BODY pdfpkgen IS
         l_catalog_obj   NUMBER;
         l_pages_obj     NUMBER;
         l_info_obj      NUMBER;
-        l_metadata_active BOOLEAN := g_metadata_title IS NOT NULL
-                      OR g_metadata_author IS NOT NULL
-                      OR g_metadata_subject IS NOT NULL
-                      OR g_metadata_keywords IS NOT NULL;
+        l_metadata_active BOOLEAN := TRUE;
+        l_file_id       VARCHAR2(32);
+        l_flate         BLOB;
+        l_flate_len     NUMBER;
+        l_tmp_blob      BLOB;
         l_xref_pos      NUMBER;
         l_pages_kids    VARCHAR2(32767);
         l_xobjects_str  VARCHAR2(32767);
@@ -3350,6 +3351,59 @@ CREATE OR REPLACE PACKAGE BODY pdfpkgen IS
         BEGIN
             RETURN ROUND(p_value * 1000 / g_unicode_units_per_em);
         END;
+
+        FUNCTION adler32(p_src BLOB) RETURN RAW IS
+            c_mod CONSTANT PLS_INTEGER := 65521;
+            l_a   PLS_INTEGER := 1;
+            l_b   PLS_INTEGER := 0;
+            l_len PLS_INTEGER := DBMS_LOB.GETLENGTH(p_src);
+            l_pos PLS_INTEGER := 1;
+            l_amt PLS_INTEGER;
+            l_buf RAW(32767);
+        BEGIN
+            WHILE l_pos <= l_len LOOP
+                l_amt := LEAST(32767, l_len - l_pos + 1);
+                DBMS_LOB.READ(p_src, l_amt, l_pos, l_buf);
+                FOR k IN 1 .. l_amt LOOP
+                    l_a := MOD(l_a + TO_NUMBER(RAWTOHEX(UTL_RAW.SUBSTR(l_buf, k, 1)), 'XX'), c_mod);
+                    l_b := MOD(l_b + l_a, c_mod);
+                END LOOP;
+                l_pos := l_pos + l_amt;
+            END LOOP;
+            RETURN HEXTORAW(
+                LPAD(TO_CHAR(l_b, 'FMXXXX'), 4, '0') ||
+                LPAD(TO_CHAR(l_a, 'FMXXXX'), 4, '0')
+            );
+        END;
+
+        FUNCTION flate(p_src BLOB) RETURN BLOB IS
+            l_gz  BLOB;
+            l_out BLOB;
+            l_len PLS_INTEGER;
+        BEGIN
+            DBMS_LOB.CREATETEMPORARY(l_out, TRUE);
+            IF p_src IS NULL OR DBMS_LOB.GETLENGTH(p_src) = 0 THEN
+                DBMS_LOB.WRITEAPPEND(l_out, 8, HEXTORAW('789C030000000001'));
+                RETURN l_out;
+            END IF;
+
+            l_gz  := UTL_COMPRESS.LZ_COMPRESS(p_src);
+            l_len := DBMS_LOB.GETLENGTH(l_gz);
+            IF l_len < 19
+            OR DBMS_LOB.SUBSTR(l_gz, 3, 1) <> HEXTORAW('1F8B08')
+            OR UTL_RAW.BIT_AND(DBMS_LOB.SUBSTR(l_gz, 1, 4), HEXTORAW('1E')) <> HEXTORAW('00') THEN
+                DBMS_LOB.FREETEMPORARY(l_gz);
+                DBMS_LOB.FREETEMPORARY(l_out);
+                RAISE_APPLICATION_ERROR(-20029, 'Formato inesperado retornado por UTL_COMPRESS.LZ_COMPRESS.');
+            END IF;
+
+            DBMS_LOB.WRITEAPPEND(l_out, 2, HEXTORAW('789C'));
+            DBMS_LOB.COPY(l_out, l_gz, l_len - 18, 3, 11);
+            DBMS_LOB.WRITEAPPEND(l_out, 4, adler32(p_src));
+            DBMS_LOB.FREETEMPORARY(l_gz);
+            RETURN l_out;
+        END;
+
     BEGIN
         IF g_page_count = 0 THEN
             RAISE_APPLICATION_ERROR(-20028, 'Crie ao menos uma página com new_document antes de gerar o PDF.');
@@ -3453,13 +3507,15 @@ CREATE OR REPLACE PACKAGE BODY pdfpkgen IS
         END LOOP;
 
         DBMS_LOB.CREATETEMPORARY(l_pdf, TRUE);
-        write_blob(l_pdf, '%PDF-1.4' || CHR(10));
+        write_blob(l_pdf, '%PDF-1.7' || CHR(10));
+        DBMS_LOB.WRITEAPPEND(l_pdf, 6, HEXTORAW('25E2E3CFD30A'));
 
         start_obj(l_catalog_obj);
         write_blob(
             l_pdf,
             '<<' || CHR(10) ||
             '/Type /Catalog' || CHR(10) ||
+            '/Version /1.7' || CHR(10) ||
             '/Pages ' || fmt_num(l_pages_obj) || ' 0 R' || CHR(10) ||
             '>>' || CHR(10)
         );
@@ -3556,27 +3612,29 @@ CREATE OR REPLACE PACKAGE BODY pdfpkgen IS
             DBMS_LOB.CREATETEMPORARY(l_page_blob, TRUE);
             BEGIN
                 append_clob_to_blob(l_page_blob, g_pages(i));
-                l_page_len := DBMS_LOB.GETLENGTH(l_page_blob);
+                l_flate := flate(l_page_blob);
+                l_page_len := DBMS_LOB.GETLENGTH(l_flate);
 
                 start_obj(l_stream_objs(i));
                 write_blob(
                     l_pdf,
                     '<<' || CHR(10) ||
+                    '/Filter /FlateDecode' || CHR(10) ||
                     '/Length ' || fmt_num(l_page_len) || CHR(10) ||
                     '>>' || CHR(10) ||
                     'stream' || CHR(10)
                 );
-                IF l_page_len > 0 THEN
-                    DBMS_LOB.COPY(
-                        l_pdf,
-                        l_page_blob,
-                        l_page_len,
-                        DBMS_LOB.GETLENGTH(l_pdf) + 1,
-                        1
-                    );
-                END IF;
+                DBMS_LOB.COPY(
+                    l_pdf,
+                    l_flate,
+                    l_page_len,
+                    DBMS_LOB.GETLENGTH(l_pdf) + 1,
+                    1
+                );
                 write_blob(l_pdf, CHR(10) || 'endstream' || CHR(10));
                 end_obj;
+                DBMS_LOB.FREETEMPORARY(l_flate);
+                l_flate := NULL;
                 DBMS_LOB.FREETEMPORARY(l_page_blob);
             EXCEPTION
                 WHEN OTHERS THEN
@@ -3612,48 +3670,70 @@ CREATE OR REPLACE PACKAGE BODY pdfpkgen IS
         END LOOP;
 
         IF l_unicode_active THEN
+            l_flate := flate(g_unicode_font_blob);
+            l_flate_len := DBMS_LOB.GETLENGTH(l_flate);
             start_obj(l_unicode_file_obj);
             write_blob(
                 l_pdf,
-                '<< /Length ' || fmt_num(g_unicode_font_length) ||
+                '<< /Filter /FlateDecode /Length ' || fmt_num(l_flate_len) ||
                 ' /Length1 ' || fmt_num(g_unicode_font_length) || ' >>' || CHR(10) ||
                 'stream' || CHR(10)
             );
             DBMS_LOB.COPY(
                 l_pdf,
-                g_unicode_font_blob,
-                g_unicode_font_length,
+                l_flate,
+                l_flate_len,
                 DBMS_LOB.GETLENGTH(l_pdf) + 1,
                 1
             );
             write_blob(l_pdf, CHR(10) || 'endstream' || CHR(10));
             end_obj;
+            DBMS_LOB.FREETEMPORARY(l_flate);
+            l_flate := NULL;
 
+            l_flate := flate(l_unicode_map);
+            l_flate_len := DBMS_LOB.GETLENGTH(l_flate);
             start_obj(l_unicode_map_obj);
             write_blob(
                 l_pdf,
-                '<< /Length ' || fmt_num(l_unicode_map_length) || ' >>' || CHR(10) ||
+                '<< /Filter /FlateDecode /Length ' || fmt_num(l_flate_len) || ' >>' || CHR(10) ||
                 'stream' || CHR(10)
             );
             DBMS_LOB.COPY(
                 l_pdf,
-                l_unicode_map,
-                l_unicode_map_length,
+                l_flate,
+                l_flate_len,
                 DBMS_LOB.GETLENGTH(l_pdf) + 1,
                 1
             );
             write_blob(l_pdf, CHR(10) || 'endstream' || CHR(10));
             end_obj;
+            DBMS_LOB.FREETEMPORARY(l_flate);
+            l_flate := NULL;
 
+            DBMS_LOB.CREATETEMPORARY(l_tmp_blob, TRUE);
+            append_clob_to_blob(l_tmp_blob, l_unicode_cmap);
+            l_flate := flate(l_tmp_blob);
+            l_flate_len := DBMS_LOB.GETLENGTH(l_flate);
+            DBMS_LOB.FREETEMPORARY(l_tmp_blob);
+            l_tmp_blob := NULL;
             start_obj(l_unicode_tounicode_obj);
             write_blob(
                 l_pdf,
-                '<< /Length ' || fmt_num(DBMS_LOB.GETLENGTH(l_unicode_cmap)) || ' >>' || CHR(10) ||
+                '<< /Filter /FlateDecode /Length ' || fmt_num(l_flate_len) || ' >>' || CHR(10) ||
                 'stream' || CHR(10)
             );
-            append_clob_to_blob(l_pdf, l_unicode_cmap);
+            DBMS_LOB.COPY(
+                l_pdf,
+                l_flate,
+                l_flate_len,
+                DBMS_LOB.GETLENGTH(l_pdf) + 1,
+                1
+            );
             write_blob(l_pdf, CHR(10) || 'endstream' || CHR(10));
             end_obj;
+            DBMS_LOB.FREETEMPORARY(l_flate);
+            l_flate := NULL;
 
             start_obj(l_unicode_descriptor_obj);
             write_blob(
@@ -3739,10 +3819,17 @@ CREATE OR REPLACE PACKAGE BODY pdfpkgen IS
             IF g_metadata_keywords IS NOT NULL THEN
                 write_blob(l_pdf, '/Keywords ' || metadata_pdf_string(g_metadata_keywords) || CHR(10));
             END IF;
+            write_blob(l_pdf, '/Producer (pdfpkgen)' || CHR(10));
+            write_blob(
+                l_pdf,
+                '/CreationDate (D:' ||
+                TO_CHAR(SYS_EXTRACT_UTC(SYSTIMESTAMP), 'YYYYMMDDHH24MISS') || 'Z)' || CHR(10)
+            );
             write_blob(l_pdf, '>>' || CHR(10));
             end_obj;
         END IF;
 
+        l_file_id := RAWTOHEX(SYS_GUID());
         l_xref_pos := DBMS_LOB.GETLENGTH(l_pdf);
         write_blob(
             l_pdf,
@@ -3764,6 +3851,7 @@ CREATE OR REPLACE PACKAGE BODY pdfpkgen IS
             '<<' || CHR(10) ||
             '/Size ' || fmt_num(g_obj_count + 1) || CHR(10) ||
             '/Root ' || fmt_num(l_catalog_obj) || ' 0 R' || CHR(10) ||
+            '/ID [<' || l_file_id || '><' || l_file_id || '>]' || CHR(10) ||
             CASE WHEN l_metadata_active THEN '/Info ' || fmt_num(l_info_obj) || ' 0 R' || CHR(10) ELSE '' END ||
             '>>' || CHR(10) ||
             'startxref' || CHR(10) ||
@@ -3775,6 +3863,12 @@ CREATE OR REPLACE PACKAGE BODY pdfpkgen IS
         RETURN l_pdf;
     EXCEPTION
         WHEN OTHERS THEN
+            IF l_flate IS NOT NULL AND DBMS_LOB.ISTEMPORARY(l_flate) = 1 THEN
+                DBMS_LOB.FREETEMPORARY(l_flate);
+            END IF;
+            IF l_tmp_blob IS NOT NULL AND DBMS_LOB.ISTEMPORARY(l_tmp_blob) = 1 THEN
+                DBMS_LOB.FREETEMPORARY(l_tmp_blob);
+            END IF;
             IF l_unicode_map IS NOT NULL AND DBMS_LOB.ISTEMPORARY(l_unicode_map) = 1 THEN
                 DBMS_LOB.FREETEMPORARY(l_unicode_map);
             END IF;
